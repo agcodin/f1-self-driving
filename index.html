@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RB21 Self-Learning Driver</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#12161f; --panel2:#171c27; --line:#232a38;
+    --text:#e8eaf0; --dim:#8d97a8; --accent:#00e0a4; --warn:#ffb020; --bad:#ff2d55;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font:13px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
+  #app{display:grid;grid-template-columns:270px 1fr 300px;grid-template-rows:52px 1fr;height:100%}
+  header{grid-column:1/-1;display:flex;align-items:center;gap:14px;padding:0 16px;
+    border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{font-size:14px;margin:0;font-weight:650;letter-spacing:.2px}
+  header .sub{color:var(--dim);font-size:11px}
+  .spacer{flex:1}
+  select,button{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    border-radius:6px;padding:6px 10px;font:inherit;font-size:12px;cursor:pointer}
+  button:hover{border-color:#3a455c}
+  button.active{background:var(--accent);color:#04221a;border-color:var(--accent);font-weight:600}
+  aside{background:var(--panel);overflow-y:auto;min-height:0;padding:12px}
+  aside.left{border-right:1px solid var(--line)}
+  aside.right{border-left:1px solid var(--line)}
+  main{position:relative;background:#070a10;min-width:0;min-height:0;overflow:hidden}
+  /* Absolutely positioned so the canvas takes its size FROM the grid cell.
+     A percentage-height canvas would instead feed its own height back into
+     the cell and grow without bound. */
+  #track{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+    padding:10px;margin-bottom:10px}
+  .card h2{font-size:10px;letter-spacing:.9px;text-transform:uppercase;color:var(--dim);
+    margin:0 0 8px;font-weight:650}
+  .row{display:flex;justify-content:space-between;align-items:baseline;padding:2px 0}
+  .row span:first-child{color:var(--dim);font-size:11px}
+  .row span:last-child{font-family:var(--mono);font-size:12px}
+  .big{font-family:var(--mono);font-size:30px;font-weight:600;line-height:1.05}
+  .unit{font-size:11px;color:var(--dim);margin-left:4px}
+  .bar{height:9px;background:rgba(255,255,255,.08);border-radius:5px;overflow:hidden;margin:3px 0 7px}
+  .bar>i{display:block;height:100%;width:0;border-radius:5px;transition:width .05s linear}
+  #thr{background:var(--accent)} #brk{background:var(--bad)}
+  .steer{height:9px;background:rgba(255,255,255,.08);border-radius:5px;position:relative;overflow:hidden}
+  .steer>i{position:absolute;left:50%;top:0;width:3px;height:100%;background:var(--accent);
+    margin-left:-1.5px;border-radius:2px}
+  canvas.viz{width:100%;display:block;border-radius:6px}
+  #gauges{height:86px} #elev{height:74px} #curve{height:104px}
+  #decisions{height:132px} #reliability{height:112px}
+  .pill{display:inline-block;padding:3px 9px;border-radius:99px;font-size:10px;
+    font-weight:650;letter-spacing:.6px;font-family:var(--mono)}
+  .pill.ok{background:rgba(0,224,164,.15);color:var(--accent)}
+  .pill.warn{background:rgba(255,176,32,.15);color:var(--warn)}
+  .pill.bad{background:rgba(255,45,85,.15);color:var(--bad)}
+  label.opt{display:flex;align-items:center;gap:7px;padding:3px 0;font-size:12px;color:var(--dim);cursor:pointer}
+  label.opt input{accent-color:var(--accent)}
+  .note{font-size:10.5px;color:var(--dim);line-height:1.5;margin-top:6px}
+  .overlay{position:absolute;left:14px;top:14px;display:flex;gap:8px;align-items:center}
+  .legend{position:absolute;right:14px;bottom:14px;background:rgba(11,14,20,.82);
+    border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:10px;color:var(--dim)}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>RB21 · Self-Learning Driver</h1>
+    <span class="sub">Jev-style typed decisions · evolution strategies</span>
+    <div class="spacer"></div>
+    <select id="trackSel">
+      <option value="monza">Monza</option>
+      <option value="spa">Spa-Francorchamps</option>
+      <option value="cota">Circuit of the Americas</option>
+    </select>
+    <select id="driverSel">
+      <option value="jev">Driver: learned policy</option>
+      <option value="reference">Driver: reference fallback</option>
+    </select>
+    <select id="speedSel">
+      <option value="0.25">0.25×</option>
+      <option value="0.5">0.5×</option>
+      <option value="1" selected>1×</option>
+      <option value="2">2×</option>
+    </select>
+    <button id="btnUseBest">Load trained</button>
+    <button id="btnRespawn">Respawn</button>
+    <button id="btnReset">Reset training</button>
+    <button id="btnTrain">Start training</button>
+  </header>
+
+  <aside class="left">
+    <div class="card">
+      <h2>Circuit</h2>
+      <div id="trackName" style="font-weight:600;margin-bottom:3px">—</div>
+      <div id="trackInfo" class="note" style="margin-top:0">—</div>
+      <canvas id="elev" class="viz" style="margin-top:8px"></canvas>
+    </div>
+
+    <div class="card">
+      <h2>Physics limit</h2>
+      <div class="row"><span>QSS optimal lap</span><span id="qss">—</span></div>
+      <div class="row"><span>Real 2025 pole</span><span id="pole">—</span></div>
+      <div class="row"><span>Top speed</span><span id="vmax">—</span></div>
+      <div class="note" id="poleBy">—</div>
+      <div class="note">Minimum-curvature line solved on the real centreline, then a
+        quasi-steady-state pass over the friction ellipse including grade,
+        crest/compression load and altitude-corrected air density.</div>
+    </div>
+
+    <div class="card">
+      <h2>Car</h2>
+      <div class="row"><span>Chassis</span><span>RB21</span></div>
+      <div class="row"><span>Mass</span><span>815 kg</span></div>
+      <div class="row"><span>Power unit</span><span>735 kW</span></div>
+      <div class="row"><span>Tyres</span><span>305 / 405</span></div>
+      <div class="note">Regulation mass and dimensions are from the 2025 FIA rules;
+        aero and tyre coefficients are not public, so they were fitted until the
+        limit lap lands ~1 % under real 2025 pole at all three circuits.</div>
+    </div>
+
+    <div class="card">
+      <h2>View</h2>
+      <label class="opt"><input type="checkbox" id="optFollow" checked> Follow the car</label>
+      <label class="opt"><input type="checkbox" id="optLine" checked> Show reference line</label>
+      <label class="opt"><input type="checkbox" id="optEscalate"> Escalate when unsure</label>
+      <div class="note">Escalation hands control to the reference fallback whenever
+        confidence drops below 35 %. It is off during training — a policy allowed
+        to escalate would just learn to be permanently unsure and let the
+        fallback drive.</div>
+    </div>
+  </aside>
+
+  <main>
+    <canvas id="track"></canvas>
+    <div class="overlay">
+      <span id="status" class="pill ok">RUNNING</span>
+      <span id="policyBadge" class="pill bad">untrained</span>
+    </div>
+    <div class="legend">
+      <div style="margin-bottom:4px;color:var(--text)">Trail colour = typed decision</div>
+      <div><i style="background:#ff2d55"></i>brake <i style="background:#ffa02e;margin-left:8px"></i>trail
+        <i style="background:#9aa4b2;margin-left:8px"></i>coast <i style="background:#00e0a4;margin-left:8px"></i>power</div>
+      <div style="margin-top:5px"><i style="background:#2a4e80"></i>low elevation
+        <i style="background:#b07c2c;margin-left:8px"></i>high elevation</div>
+    </div>
+  </main>
+
+  <aside class="right">
+    <div class="card">
+      <div class="grid2">
+        <div>
+          <h2>Speed</h2>
+          <div class="big"><span id="speed">0</span><span class="unit">km/h</span></div>
+        </div>
+        <div>
+          <h2>Gear</h2>
+          <div class="big" id="gear">1</div>
+        </div>
+      </div>
+      <div style="margin-top:8px">
+        <div class="bar"><i id="thr"></i></div>
+        <div class="bar"><i id="brk"></i></div>
+        <div class="steer"><i id="steerBar"></i></div>
+      </div>
+      <canvas id="gauges" class="viz" style="margin-top:8px"></canvas>
+    </div>
+
+    <div class="card">
+      <h2>Jev decision head</h2>
+      <div class="row"><span>Emitted</span><span id="decName">COAST</span></div>
+      <canvas id="decisions" class="viz"></canvas>
+      <div class="row" style="margin-top:6px"><span>Confidence</span><span id="conf">50%</span></div>
+      <div class="bar"><i id="confBar"></i></div>
+      <div class="row"><span>Escalation rate</span><span id="escRate">0.0%</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Confidence calibration</h2>
+      <canvas id="reliability" class="viz"></canvas>
+      <div class="note">Each dot is a confidence bucket; height is how often those
+        decisions actually turned out well. On the diagonal means honest — 70 %
+        confidence really does work out 70 % of the time. Dot size is sample count.</div>
+    </div>
+
+    <div class="card">
+      <h2>Learning</h2>
+      <canvas id="curve" class="viz"></canvas>
+      <div class="row"><span>Generation</span><span id="gen">0</span></div>
+      <div class="row"><span>Fitness</span><span id="fit">—</span></div>
+      <div class="row"><span>Brier score</span><span id="brier">—</span></div>
+      <div class="row"><span>Episode length</span><span id="stage">—</span></div>
+      <div class="row"><span>Source</span><span id="trainSrc">—</span></div>
+      <div class="row"><span>Trainer best lap</span><span id="trainerLap">—</span></div>
+      <div class="row"><span>Checkpoint</span><span id="ckptAge">—</span></div>
+    </div>
+
+    <div class="card">
+      <h2>This run</h2>
+      <div class="row"><span>Lap progress</span><span id="progress">0%</span></div>
+      <div class="row"><span>Furthest</span><span id="furthest">0.00 km</span></div>
+      <div class="row"><span>Attempts</span><span id="attempts">0</span></div>
+      <div class="note">Red crosses on track mark where runs ended. A cluster
+        means the policy keeps failing at the same corner.</div>
+    </div>
+
+    <div class="card">
+      <h2>Lap</h2>
+      <div class="row"><span>Last</span><span id="lastLap">--:--.---</span></div>
+      <div class="row"><span>Best</span><span id="bestLap">--:--.---</span></div>
+      <div class="row"><span>vs limit</span><span id="delta">--</span></div>
+    </div>
+  </aside>
+</div>
+
+<script src="tracks.js"></script>
+<script src="physics.js"></script>
+<script src="lapsim.js"></script>
+<script src="driver.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

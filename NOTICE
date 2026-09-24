@@ -1,0 +1,42 @@
+This project redistributes and builds upon third-party data. The generated file
+`tracks.js` is a derived database combining all three sources below.
+
+----------------------------------------------------------------------
+Track centrelines and widths  —  data/Monza.csv, Spa.csv, Austin.csv
+----------------------------------------------------------------------
+TUM racetrack-database, Technical University of Munich,
+Institute of Automotive Technology.
+https://github.com/TUMFTM/racetrack-database
+Licensed under LGPL-3.0.
+
+----------------------------------------------------------------------
+Circuit georeferencing  —  data/osm_*.json
+----------------------------------------------------------------------
+© OpenStreetMap contributors, retrieved via the Overpass API.
+https://www.openstreetmap.org/copyright
+Licensed under the Open Database License (ODbL) v1.0.
+
+ODbL share-alike applies to `tracks.js`, which is a Derived Database: the
+OpenStreetMap geometry is used to georeference the centrelines by rigid ICP
+fit. `tracks.js` is therefore offered under ODbL v1.0.
+
+----------------------------------------------------------------------
+Elevation  —  data/elev_*.npy
+----------------------------------------------------------------------
+Sampled via OpenTopoData (https://www.opentopodata.org/):
+  * Europe (Monza, Spa): EU-DEM v1.1, © European Union, Copernicus Land
+    Monitoring Service, European Environment Agency (EEA). Free to use with
+    attribution.
+  * United States (COTA): USGS 3DEP / NED 10 m. Public domain.
+
+----------------------------------------------------------------------
+Vehicle model
+----------------------------------------------------------------------
+Mass, dimensions and power-unit figures follow the 2025 FIA Formula One
+Technical Regulations and publicly reported team figures. Aerodynamic and
+tyre coefficients are NOT published by any team; those in this project are
+fitted parameters chosen so the simulated limit lap matches real 2025 pole
+times, and they should not be read as actual Red Bull Racing data.
+
+This project is not affiliated with, endorsed by, or connected to Oracle Red
+Bull Racing, Formula One, the FIA, or TypeSafe AI.
