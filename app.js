@@ -490,11 +490,11 @@ function loadTrack(key) {
   S.art = buildTrackPath(S.track);
   S.car = new F1.Car(S.track, F1.RB21);
   S.policy = new Jev.Policy(Jev.randomGenome(Jev.makeRng(7)));
-  S.pretrained = null; S.policySource = "untrained"; S.ckptTag = null; S.ckptMismatch = null;
-  S.trainerBestLap = null; S.ckptAt = null; S.lastLiveGen = null; S.lastLiveAt = null;
-  S.liveMisses = 0;
-  loadCheckpoint(key);
-  startCheckpointPolling(key);
+  // Weights are shared across circuits, so switching track keeps the policy
+  // and only resets the per-circuit readouts.
+  S.ckptTag = null;
+  loadCheckpoint();
+  startCheckpointPolling();
   S.gen = 0; S.history = []; S.rec = null; S.lapBest = null;
   resetRun();
 
@@ -502,8 +502,10 @@ function loadTrack(key) {
   $("trackName").textContent = S.track.name;
   $("trackInfo").textContent =
     `${(S.track.length / 1000).toFixed(3)} km · ${(S.art.zmax - S.art.zmin).toFixed(0)} m elevation range · ${F1.RB21.aero[m.aero].label}`;
+  const hb = $("heldOut");
+  if (hb) hb.style.display = m.heldOut ? "inline-block" : "none";
   $("qss").textContent = fmtLap(S.ref.time);
-  $("pole").textContent = fmtLap(m.pole2025);
+  $("pole").textContent = m.pole2025 ? fmtLap(m.pole2025) : "—";
   $("poleBy").textContent = m.poleBy;
   $("vmax").textContent = (S.ref.vmax * 3.6).toFixed(0) + " km/h";
 
@@ -523,12 +525,14 @@ function loadTrack(key) {
   if (S.training) S.worker.postMessage({ cmd: "start" });
 }
 
-// Weights from the headless trainer. `<track>.live.json` is rewritten every few
-// generations while training runs, so polling it lets the display follow real
-// training progress; `<track>.json` is the best finished checkpoint.
-async function loadCheckpoint(key) {
+// Weights from the headless trainer. There is ONE set for every circuit --
+// the policy is trained across several at once and is meant to transfer -- so
+// these are not keyed by track. `unified.live.json` is rewritten every couple
+// of generations while training runs; `unified.json` is the best finished
+// checkpoint.
+async function loadCheckpoint() {
   const got = [];
-  for (const file of [`${key}.live.json`, `${key}.json`]) {
+  for (const file of ["unified.live.json", "unified.json"]) {
     try {
       if (file.endsWith(".live.json") && S.liveMisses > 2) continue;
       const r = await fetch(`weights/${file}`, { cache: "no-store" });
@@ -536,51 +540,30 @@ async function loadCheckpoint(key) {
       if (file.endsWith(".live.json")) S.liveMisses = 0;
       const w = await r.json();
       w.live = file.endsWith(".live.json");
-      // A checkpoint from a different observation set cannot be loaded. Say so
-      // rather than silently leaving an untrained policy driving, which looks
-      // exactly like a trained one that crashes instantly.
       if (w.params === Jev.N_PARAMS) got.push(w);
       else S.ckptMismatch = `${file}: ${w.params} params, build expects ${Jev.N_PARAMS}`;
     } catch (e) { /* try the next file */ }
   }
-  if (!got.length || S.key !== key) { if (S.policySource === "untrained") updatePolicyBadge(); return; }
+  if (!got.length) { if (S.policySource === "untrained") updatePolicyBadge(); return; }
 
-  // Is the server trainer still working? Its live checkpoint's generation
-  // climbing is the signal.
-  // Once training is over and the weights are final, there is nothing left to
-  // poll for.
   if (S.liveMisses > 2 && S.ckptTag) { clearInterval(S.pollTimer); S.pollTimer = null; }
   const live = got.find((w) => w.live);
   if (live && live.gen !== S.lastLiveGen) { S.lastLiveGen = live.gen; S.lastLiveAt = Date.now(); }
   const trainerActive = S.lastLiveAt != null && Date.now() - S.lastLiveAt < 45000;
+  const best = trainerActive && live ? live : got.reduce((a, b) => (b.fitness > a.fitness ? b : a));
 
-  // While training runs, follow the live policy so the display actually shows
-  // progress. Picking the highest-fitness checkpoint instead pins the readout
-  // to whatever generation last set a record, which looks frozen. Once the
-  // trainer stops, the best checkpoint is usually ahead of the final one, so
-  // switch to fitness then.
-  const best = trainerActive && live
-    ? live
-    : got.reduce((a, b) => (b.fitness > a.fitness ? b : a));
-  // Only the best-checkpoint file records a lap time; keep it even when the
-  // live checkpoint wins on fitness.
-  const withLap = got.filter((w) => w.bestLap).sort((a, b) => b.fitness - a.fitness)[0];
-  if (withLap) S.trainerBestLap = withLap.bestLap;
   const tag = `${best.gen}:${best.fitness.toFixed(0)}`;
-  if (tag === S.ckptTag) return;                   // nothing new
+  if (tag === S.ckptTag) return;
   S.pretrained = Float32Array.from(best.theta);
   S.ckptMeta = best;
   S.ckptTag = tag;
   S.ckptAt = performance.now();
+  const mine = best.perTrack && best.perTrack.find((t) => t.key === S.key);
+  S.trainerBestLap = mine ? mine.qualiLap : null;
   if (S.policySource !== "live") {
-    // The Learning panel has to report whichever trainer is actually driving
-    // the car. Reading only the in-browser worker left generation and fitness
-    // frozen at zero whenever the car was being driven by server checkpoints.
     S.gen = best.gen;
-    S.rec = {
-      gen: best.gen, best: best.fitness, mean: null,
-      dist: best.dist, brier: best.brier, duration: best.duration,
-    };
+    S.rec = { gen: best.gen, best: best.fitness, mean: null,
+              brier: best.brier, duration: best.duration };
     const last = S.history[S.history.length - 1];
     if (!last || last.gen !== best.gen) S.history.push(S.rec);
     if (S.history.length > 900) S.history.shift();
@@ -589,10 +572,10 @@ async function loadCheckpoint(key) {
 }
 
 // Poll for newer weights while the headless trainer is running.
-function startCheckpointPolling(key) {
+function startCheckpointPolling() {
   clearInterval(S.pollTimer);
   S.pollTimer = setInterval(() => {
-    if (S.key === key && S.policySource !== "live") loadCheckpoint(key);
+    if (S.policySource !== "live") loadCheckpoint();
   }, 3000);
 }
 
@@ -613,7 +596,7 @@ function updatePolicyBadge() {
   else if (S.policySource === "live") { b.textContent = `live policy · gen ${S.gen}`; b.className = "pill ok"; }
   else if (S.policySource === "pretrained") {
     const m = S.ckptMeta, running = S.lastLiveAt != null && Date.now() - S.lastLiveAt < 45000;
-    b.textContent = m ? `${running ? "training" : "trained"} · gen ${m.gen}` : "trained";
+    b.textContent = m ? `unified · gen ${m.gen}` : "trained";
     b.className = "pill ok";
   } else { b.textContent = "untrained"; b.className = "pill bad"; }
   $("btnUseBest").disabled = !S.pretrained || S.policySource === "pretrained";

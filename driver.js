@@ -212,7 +212,7 @@
     const {
       s0 = 0, v0 = 0, duration = 25, dt = 1 / 240, ctrlEvery = 4,
       fallback = null, escalateBelow = 0, recorder = null, pose = null, timed = false,
-      sampleSeed = null, chatterWeight = CHATTER_WEIGHT,
+      sampleSeed = null, chatterWeight = CHATTER_WEIGHT, paceRef = null,
     } = opts;
     // Common random numbers: every genome in a generation samples the same
     // draws, so fitness differences reflect the weights and not the dice.
@@ -279,8 +279,17 @@
     // Control effort: a steady hand is worth a little, and it keeps the policy
     // from paying for nothing in commands the steering rack cannot follow.
     const chatter = ctrlSteps > 1 ? steerWork / (ctrlSteps - 1) : 0;
-    let fitness = car.dist - forfeit - 200 * brier - chatterWeight * chatter;
-    if (car.dist < 5) fitness -= 200; // punish genomes that just sit still
+    let fitness;
+    if (paceRef) {
+      // Normalised: 1000 is limit pace on this circuit. Without this a long
+      // fast circuit would dominate a short slow one purely through metres.
+      fitness = 1000 * ((car.dist - forfeit) / paceRef - 0.2 * brier)
+              - chatterWeight * chatter;
+      if (car.dist < 5) fitness -= 500;
+    } else {
+      fitness = car.dist - forfeit - 200 * brier - chatterWeight * chatter;
+      if (car.dist < 5) fitness -= 200; // punish genomes that just sit still
+    }
     return {
       fitness, dist: car.dist, brier, crashed, reason: car.reason,
       time: car.t, laps: car.laps, lapTimes: car.lapTimes.slice(),
@@ -295,26 +304,30 @@
   // algorithm at this parameter count, and it keeps one coherent policy (theta)
   // that visibly improves rather than a population that jumps around.
   class Trainer {
-    constructor(track, spec, ref, cfg = {}) {
-      this.track = track;
-      this.ref = ref;
+    // `circuits` is one {track, ref} or a list of them. Training on several at
+    // once is the point: the observation vector is already track-agnostic
+    // (curvature lookaheads, grade, braking demand), so one set of weights can
+    // drive any circuit -- but only if it is scored on several, otherwise it
+    // memorises one.
+    constructor(circuits, spec, cfg = {}) {
+      this.circuits = (Array.isArray(circuits) ? circuits : [circuits]).map((c) => ({
+        track: c.track, ref: c.ref,
+        car: new F1.Car(c.track, spec),
+        // Metres the limit lap would cover per second on this circuit.
+        pace: c.track.length / c.ref.time,
+      }));
+      this.track = this.circuits[0].track;
+      this.ref = this.circuits[0].ref;
       this.cfg = Object.assign({
         pairs: 32, sigma: 0.09, lr: 0.04, seed: 12345,
         weightDecay: 2e-4, dt: 1 / 160, ctrlEvery: 3,
-        starts: 4, startSpeed: 0.82, qualiSpeed: 0.98,
-        // Both measured on Monza over 250 generations against the steering
-        // rate limit alone (fitness 2402, a 95.93 s lap, 91 % full throttle on
-        // straights): sampling decisions instead of taking the argmax scored
-        // 2132 and never found full throttle, and a chatter penalty scored
-        // 2190. The rate limit alone already cut steering chatter from 1.26 to
-        // 0.47, which is what the penalty was for. Both are kept switchable
-        // because the result was measured, not assumed.
+        starts: 3, startSpeed: 0.82, qualiSpeed: 0.98,
         stochastic: false, chatterWeight: 0,
       }, cfg);
       this.rng = makeRng(this.cfg.seed);
       this.theta = randomGenome(this.rng);
       for (let i = 0; i < N_PARAMS; i++) this.theta[i] *= 0.5;
-      this.theta[N_PARAMS - 2 - N_DEC + (N_DEC - 1)] = 1.0; // bias toward FULL_POWER at init
+      this.theta[N_PARAMS - 3] = 1.0; // bias toward FULL_POWER at init
       this.m = new Float32Array(N_PARAMS);
       this.v = new Float32Array(N_PARAMS);
       this.eps = [];
@@ -322,50 +335,36 @@
       this.probe = new Float32Array(N_PARAMS);
       this.gen = 0;
       this.history = [];
-      this.car = new F1.Car(track, spec);
       this.policy = new Policy(this.theta);
       this.best = this.theta;
       this.bestFitness = -Infinity;
       this.lastDuration = null;
-      this.starts = this.buildStarts(this.cfg.starts, this.cfg.startSpeed, this.cfg.qualiSpeed);
+      for (const c of this.circuits) c.starts = this.buildStarts(c, this.cfg.starts, this.cfg.startSpeed, this.cfg.qualiSpeed);
     }
 
-    // Curriculum. Start points are FIXED, not resampled per generation: a
-    // policy's score has to mean the same thing from one generation to the next
-    // or the gradient estimate is measuring luck. Early stages drop the car at
-    // several points around the lap so every corner gets practised; later
-    // stages demand one long run from the grid.
     // The start points never change -- only how long each run lasts. Swapping
     // in fresh start points late in training collapsed a competent policy and
     // it never recovered: every probe then failed at the same place, and
     // rank-shaped ES has no gradient when all samples score the same floor.
     //
-    // Episode length is set relative to the circuit's own limit lap, so the
-    // final stage always leaves room to finish a lap with margin whether the
-    // circuit takes 79 s or 99 s.
+    // Episode length is relative to each circuit's own limit lap, so the final
+    // stage always leaves room to finish a lap whether it takes 79 s or 99 s.
     schedule() {
-      const g = this.gen, T = this.ref.time;
+      const g = this.gen;
       const frac = g < 100 ? 0.25 : g < 250 ? 0.5 : g < 450 ? 0.9 : 1.5;
-      // One shared sample seed per generation (common random numbers), so a
-      // genome's score reflects its weights rather than its dice roll.
-      return {
-        starts: this.starts, duration: Math.round(T * frac),
-        sampleSeed: this.cfg.stochastic ? 7001 + g * 131 : null,
-      };
+      return { frac, sampleSeed: this.cfg.stochastic ? 7001 + g * 131 : null };
     }
 
-    // Start 0 is the timed qualifying lap: it crosses the start/finish line at
-    // racing speed, carrying the momentum a flying lap arrives with, rather
-    // than launching from a standstill. The remaining starts drop the car at
-    // points around the lap so the whole circuit gets practised, and they sit
-    // ON THE RACING LINE because the reference speed they launch at belongs to
-    // the racing line's radius, not the centreline's.
-    buildStarts(n, speedFrac, qualiFrac) {
-      const L = this.track.length, ref = this.ref;
+    // Start 0 is the timed qualifying lap: it crosses the line at racing speed,
+    // carrying the momentum a flying lap arrives with. The rest drop the car
+    // around the lap so the whole circuit gets practised, on the racing line
+    // because the reference speed they launch at belongs to its radius.
+    buildStarts(c, n, speedFrac, qualiFrac) {
+      const L = c.track.length, ref = c.ref;
       const poseAt = (i) => ({ x: ref.line.x[i], y: ref.line.y[i], psi: ref.line.psi[i] });
       const starts = [{ s0: 0, v0: ref.v[0] * qualiFrac, pose: poseAt(0), timed: true }];
       for (let k = 1; k < n; k++) {
-        const s0 = (L * k) / n, i = this.track.idx(s0);
+        const s0 = (L * k) / n, i = c.track.idx(s0);
         starts.push({ s0, v0: ref.v[i] * speedFrac, pose: poseAt(i), timed: false });
       }
       return starts;
@@ -373,22 +372,31 @@
 
     scoreGenome(genome, sc) {
       this.policy.g = genome;
-      let total = 0, bestRun = null, qualiRun = null;
-      for (const st of sc.starts) {
-        const r = evaluate(this.car, this.policy, {
-          s0: st.s0, v0: st.v0, pose: st.pose, timed: st.timed, duration: sc.duration,
-          dt: this.cfg.dt, ctrlEvery: this.cfg.ctrlEvery, sampleSeed: sc.sampleSeed,
-          chatterWeight: this.cfg.chatterWeight,
+      let total = 0, count = 0;
+      const perTrack = [];
+      for (const c of this.circuits) {
+        const duration = Math.round(c.ref.time * sc.frac);
+        const paceRef = c.pace * duration;
+        let sum = 0, quali = null;
+        for (const st of c.starts) {
+          const r = evaluate(c.car, this.policy, {
+            s0: st.s0, v0: st.v0, pose: st.pose, timed: st.timed, duration,
+            dt: this.cfg.dt, ctrlEvery: this.cfg.ctrlEvery,
+            sampleSeed: sc.sampleSeed, chatterWeight: this.cfg.chatterWeight,
+            paceRef,
+          });
+          sum += r.fitness; total += r.fitness; count++;
+          if (st.timed) quali = r;
+        }
+        const laps = quali ? quali.lapTimes.filter(Boolean) : [];
+        perTrack.push({
+          key: c.track.key, fitness: sum / c.starts.length, duration,
+          qualiLap: laps.length ? Math.min(...laps) : null,
+          qualiDist: quali ? quali.dist : 0,
+          brier: quali ? quali.brier : 0,
         });
-        total += r.fitness;
-        if (!bestRun || r.fitness > bestRun.fitness) bestRun = r;
-        // Only the timed start runs a lap clock, and it is not always the
-        // highest-scoring run -- reporting lap times off `bestRun` showed
-        // "laps 1 lap 0.00" whenever a rolling start won, which understates
-        // what the policy is actually doing.
-        if (st.timed) qualiRun = r;
       }
-      return { fitness: total / sc.starts.length, run: bestRun, quali: qualiRun };
+      return { fitness: total / count, perTrack };
     }
 
     step() {
@@ -429,18 +437,16 @@
 
       // Score theta itself so the reported curve tracks the deployed policy.
       const cur = this.scoreGenome(this.theta, sc);
-      const qLaps = cur.quali ? cur.quali.lapTimes.filter(Boolean) : [];
-      if (sc.duration !== this.lastDuration) { this.bestFitness = -Infinity; this.lastDuration = sc.duration; }
+      const dur = cur.perTrack[0].duration;
+      if (dur !== this.lastDuration) { this.bestFitness = -Infinity; this.lastDuration = dur; }
       this.bestFitness = Math.max(this.bestFitness, cur.fitness);
-      this.bestRun = cur.run;
       const rec = {
         gen: this.gen, best: cur.fitness,
         mean: (fp.reduce((a, b) => a + b, 0) + fm.reduce((a, b) => a + b, 0)) / (2 * P),
-        dist: cur.run.dist, brier: cur.run.brier, laps: cur.run.laps,
-        sigma: cfg.sigma, lapTimes: cur.run.lapTimes, duration: sc.duration,
-        crashed: cur.run.crashed,
-        qualiLap: qLaps.length ? Math.min(...qLaps) : null,
-        qualiDist: cur.quali ? cur.quali.dist : 0,
+        sigma: cfg.sigma, duration: dur,
+        perTrack: cur.perTrack,
+        brier: cur.perTrack.reduce((a, t) => a + t.brier, 0) / cur.perTrack.length,
+        qualiLap: cur.perTrack[0].qualiLap,
       };
       this.history.push(rec);
       return rec;

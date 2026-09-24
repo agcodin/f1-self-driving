@@ -11,6 +11,8 @@ Output: ../tracks.js  (window.TRACKS = {...})
 import json, math, os, time, urllib.request, urllib.parse
 import numpy as np
 
+MAX_ICP_ERROR = 5.0  # metres; above this the georeferencing is not usable
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "..", "data")
 
@@ -21,6 +23,12 @@ TRACKS = {
                    name="Circuit de Spa-Francorchamps", country="Belgium"),
     "cota":   dict(csv="Austin.csv", osm="osm_austin.json", dem="ned10m",
                    name="Circuit of the Americas", country="USA"),
+    # Held out: never trained on, used only to test whether one policy
+    # generalises to a circuit it has not seen.
+    "suzuka": dict(csv="Suzuka.csv", osm="osm_suzuka.json", dem="srtm30m",
+                   name="Suzuka International Racing Course", country="Japan"),
+    "shanghai": dict(csv="Shanghai.csv", osm="osm_shanghai.json", dem="srtm30m",
+                     name="Shanghai International Circuit", country="China"),
 }
 
 
@@ -75,6 +83,13 @@ def icp(src, dst, R, t, iters=40):
 
 
 def align(tum, osm):
+    """Rigid fit of the TUM centreline onto the OSM raceway geometry.
+
+    The OSM target is filtered against the current fit and the fit redone.
+    Venues like Silverstone tag several overlapping layouts (plus the old
+    airfield) as highway=raceway, and that spurious geometry pulls a plain ICP
+    into a wrong pose -- it settled 32.9 m and 15 degrees out before this.
+    """
     sub = tum[:: max(1, len(tum) // 250)]
     best = None
     for deg in range(0, 360, 10):
@@ -85,6 +100,16 @@ def align(tum, osm):
         if best is None or err < best[2]:
             best = (R, t, err)
     R, t, err = icp(tum, osm, best[0], best[1], iters=30)
+
+    target = osm
+    for _ in range(3):
+        # Keep only OSM points the current fit actually explains, then refit.
+        i, d = nn(target, tum @ R.T + t)
+        keep = d < max(30.0, np.percentile(d, 20))
+        if keep.sum() < 200 or keep.all():
+            break
+        target = target[keep]
+        R, t, err = icp(tum, target, R, t, iters=30)
     return R, t, err
 
 
@@ -132,6 +157,14 @@ def main():
         R, t, err = align(xy, osm)
         rot = math.degrees(math.atan2(R[1, 0], R[0, 0]))
         print(f"{key}: ICP median error {err:.1f} m, rotation {rot:.1f} deg")
+        # A circuit that did not georeference cannot have trustworthy elevation,
+        # because the DEM would be sampled off the track. Drop it rather than
+        # ship it. Silverstone fails this: OpenStreetMap tags 20.7 km of
+        # raceway there (pit lanes, the Stowe and National layouts) for a 5.9 km
+        # circuit, and the fit lands 33 m and 14 degrees out.
+        if err > MAX_ICP_ERROR:
+            print(f"  SKIPPED: alignment error exceeds {MAX_ICP_ERROR} m")
+            continue
 
         ds = 5.0
         pts, wr, wl, L = resample_closed(xy, wr, wl, ds)

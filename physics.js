@@ -39,6 +39,11 @@
     monza: { aero: "low",    altitude: 162, pole2025: 78.792, poleBy: "M. Verstappen (RB21), 2025" },
     spa:   { aero: "medium", altitude: 400, pole2025: 100.562, poleBy: "L. Norris (MCL39), 2025" },
     cota:  { aero: "high",   altitude: 150, pole2025: 92.510,  poleBy: "M. Verstappen (RB21), 2025" },
+    // Held out from training entirely, used only to test whether one policy
+    // transfers to a circuit it has never seen. Real pole times are left null
+    // rather than quoted from memory.
+    suzuka:   { aero: "high",   altitude: 45, pole2025: null, poleBy: "held-out circuit", heldOut: true },
+    shanghai: { aero: "medium", altitude: 5,  pole2025: null, poleBy: "held-out circuit", heldOut: true },
   };
 
   // Tyre peak friction coefficient under vertical load Fz (N): load-sensitive.

@@ -68,12 +68,14 @@
 <div id="app">
   <header>
     <h1>RB21 · Self-Learning Driver</h1>
-    <span class="sub">Jev-style typed decisions · evolution strategies</span>
+    <span class="sub">one policy, every circuit · Jev-style typed decisions</span>
     <div class="spacer"></div>
     <select id="trackSel">
       <option value="monza">Monza</option>
       <option value="spa">Spa-Francorchamps</option>
       <option value="cota">Circuit of the Americas</option>
+      <option value="suzuka">Suzuka — held out</option>
+      <option value="shanghai">Shanghai — held out</option>
     </select>
     <select id="driverSel">
       <option value="jev">Driver: learned policy</option>
@@ -95,6 +97,7 @@
     <div class="card">
       <h2>Circuit</h2>
       <div id="trackName" style="font-weight:600;margin-bottom:3px">—</div>
+      <span id="heldOut" class="pill warn" style="display:none;margin-bottom:5px">NEVER TRAINED ON</span>
       <div id="trackInfo" class="note" style="margin-top:0">—</div>
       <canvas id="elev" class="viz" style="margin-top:8px"></canvas>
     </div>

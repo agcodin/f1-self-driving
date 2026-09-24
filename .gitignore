@@ -2,3 +2,4 @@
 node_modules/
 # Mid-training checkpoints, rewritten every couple of generations.
 weights/*.live.json
+weights/unified.live.json
