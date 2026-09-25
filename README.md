@@ -134,25 +134,63 @@ belongs.
 
 ## Results
 
-Qualifying laps from the shipped weights, measured on the flying start at the
-timing the browser runs. The fallback is the hand-written Stanley controller
-the policy escalates to, on the identical start, tuned to its own fastest
-stable margin.
+**One set of weights drives every circuit.** The policy is trained across five
+at once and never sees the two marked `*`, which exist only to measure whether
+it transfers.
 
-| Circuit | Learned policy | Fallback | Physics limit | vs limit |
-| --- | --- | --- | --- | --- |
-| Monza | **1:25.075** | 1:28.779 | 1:18.778 | +8.0 % |
-| COTA | **1:34.500** | 1:51.842 | 1:31.316 | +3.5 % |
-| Spa | **1:53.367** | 1:55.133 | 1:39.364 | +14.1 % |
+| Circuit | Unified policy | Physics limit | vs limit |
+| --- | --- | --- | --- |
+| Monza | 1:26.275 | 1:18.778 | +9.5 % |
+| Zandvoort | 1:21.450 | 1:08.852 | +18.3 % |
+| Spa | 1:57.575 | 1:39.364 | +18.3 % |
+| Hungaroring | 1:28.900 | 1:13.623 | +20.8 % |
+| COTA | 1:51.346 | 1:31.330 | +21.9 % |
+| **Suzuka\*** | **1:42.325** | 1:23.241 | +22.9 % |
+| **Shanghai\*** | dnf at 4,806 m of 5,445 | 1:27.107 | — |
 
-All three beat the hand-written controller, by 3.7 s, 17.3 s and 1.8 s. None
-reach the physics limit. COTA comes closest at +3.5 %; Spa is furthest out,
-where 106 m of elevation and long committed corners leave the most on the
-table.
+`*` never trained on.
 
-Each shipped checkpoint is chosen by **measured lap time**, not by training
-fitness — the two disagree, and picking the fitness record would have shipped a
-slower driver more than once.
+**Suzuka is the headline: a circuit the policy has never seen, driven start to
+finish.** Shanghai gets 88 % of the way round and then fails, consistently, at
+the exit of the Turn 1-3 spiral.
+
+### What generalising costs
+
+Against per-circuit specialists trained on nothing else:
+
+| Circuit | Specialist | Unified | Cost |
+| --- | --- | --- | --- |
+| Monza | 1:25.075 | 1:26.275 | +1.2 s |
+| Spa | 1:53.367 | 1:57.575 | +4.2 s |
+| COTA | 1:34.500 | 1:51.346 | +16.8 s |
+
+Monza and Spa give up little. COTA gives up a lot, and that is the honest
+headline number for this trade: one policy that drives seven circuits is
+meaningfully slower on at least one of them than a policy that drives only
+that one.
+
+### Transfer needs circuit diversity, not more generations
+
+Trained on three circuits, the policy improved steadily on those three while
+transfer went nowhere -- over 300 generations Suzuka stayed at ~2,400 m and
+Shanghai at ~850 m. Adding Zandvoort and Hungaroring (tight and slow, closest
+to Shanghai's character) moved Shanghai from 850 m to 4,806 m. That came from
+diversity, not training time.
+
+The policy has no position or track identifier as input, only local curvature,
+grade and speed, so it cannot memorise a layout in the usual sense. What it
+overfits to is the *distribution of corner shapes* three circuits happen to
+present.
+
+### Transfer is volatile, so the shipped weights are selected on it
+
+Held-out performance is not monotonic: a checkpoint that gets round an unseen
+circuit can lose that ability within a few generations while training fitness
+barely moves. The two held-out circuits also trade off against each other --
+configurations that suit Suzuka often collapse on Shanghai. `tools/select_by_heldout.js`
+therefore evaluates checkpoints on the held-out circuits and keeps the best,
+because selecting on training fitness is blind to exactly the property that
+matters when you drop the model on a new track.
 
 ### Throttle and steering
 

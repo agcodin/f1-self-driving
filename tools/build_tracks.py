@@ -25,6 +25,14 @@ TRACKS = {
                    name="Circuit of the Americas", country="USA"),
     # Held out: never trained on, used only to test whether one policy
     # generalises to a circuit it has not seen.
+    # More training circuits, for corner-shape diversity: three was not enough
+    # to transfer to an unseen layout.
+    "zandvoort": dict(csv="Zandvoort.csv", osm="osm_zandvoort.json", dem="eudem25m",
+                      name="Circuit Zandvoort", country="Netherlands"),
+    "catalunya": dict(csv="Catalunya.csv", osm="osm_catalunya.json", dem="eudem25m",
+                      name="Circuit de Barcelona-Catalunya", country="Spain"),
+    "hungaroring": dict(csv="Budapest.csv", osm="osm_budapest.json", dem="eudem25m",
+                        name="Hungaroring", country="Hungary"),
     "suzuka": dict(csv="Suzuka.csv", osm="osm_suzuka.json", dem="srtm30m",
                    name="Suzuka International Racing Course", country="Japan"),
     "shanghai": dict(csv="Shanghai.csv", osm="osm_shanghai.json", dem="srtm30m",

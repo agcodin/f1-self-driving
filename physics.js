@@ -42,6 +42,9 @@
     // Held out from training entirely, used only to test whether one policy
     // transfers to a circuit it has never seen. Real pole times are left null
     // rather than quoted from memory.
+    zandvoort:   { aero: "high",   altitude: 5,   pole2025: null, poleBy: "" },
+    catalunya:   { aero: "medium", altitude: 140, pole2025: null, poleBy: "" },
+    hungaroring: { aero: "high",   altitude: 230, pole2025: null, poleBy: "" },
     suzuka:   { aero: "high",   altitude: 45, pole2025: null, poleBy: "held-out circuit", heldOut: true },
     shanghai: { aero: "medium", altitude: 5,  pole2025: null, poleBy: "held-out circuit", heldOut: true },
   };

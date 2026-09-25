@@ -6,6 +6,7 @@ require("../tracks.js");
 const F1 = require("../physics.js"), LS = require("../lapsim.js"), J = require("../driver.js");
 
 const gens = +(process.argv[2] || 900);
+const initFrom = process.argv[3] || null;
 const trainKeys = Object.keys(globalThis.TRACKS).filter((k) => !F1.TRACK_META[k].heldOut);
 const heldKeys = Object.keys(globalThis.TRACKS).filter((k) => F1.TRACK_META[k].heldOut);
 
@@ -18,6 +19,18 @@ console.log("held out   :", heldKeys.join(", "));
 console.log("params", J.N_PARAMS);
 
 const T = new J.Trainer(circuits, F1.RB21, {});
+// Warm start. Learning three circuits at once from random weights stalls:
+// early gains are circuit-specific and averaging cancels them, so every probe
+// scores the same and rank-shaped ES has no gradient (fitness sat within two
+// points for 175 generations). Starting from a policy that can already drive
+// one circuit turns the problem into generalising rather than learning to
+// drive, which is the part that actually needs several circuits.
+if (initFrom) {
+  const w = JSON.parse(fs.readFileSync(initFrom));
+  if (w.params !== J.N_PARAMS) throw new Error(`init has ${w.params} params, build expects ${J.N_PARAMS}`);
+  T.theta.set(Float32Array.from(w.theta));
+  console.log(`warm start from ${initFrom} (gen ${w.gen})`);
+}
 const out = path.join(__dirname, "..", "weights", "unified.json");
 const live = path.join(__dirname, "..", "weights", "unified.live.json");
 fs.mkdirSync(path.dirname(out), { recursive: true });

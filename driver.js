@@ -321,7 +321,7 @@
       this.cfg = Object.assign({
         pairs: 32, sigma: 0.09, lr: 0.04, seed: 12345,
         weightDecay: 2e-4, dt: 1 / 160, ctrlEvery: 3,
-        starts: 3, startSpeed: 0.82, qualiSpeed: 0.98,
+        starts: 2, startSpeed: 0.82, qualiSpeed: 0.98,
         stochastic: false, chatterWeight: 0,
       }, cfg);
       this.rng = makeRng(this.cfg.seed);
