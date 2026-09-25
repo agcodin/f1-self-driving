@@ -522,6 +522,7 @@ function loadTrack(key) {
     }
   };
   S.worker.postMessage({ cmd: "init", track: key });
+  S.workerSeeded = false;
   if (S.training) S.worker.postMessage({ cmd: "start" });
 }
 
@@ -619,6 +620,11 @@ document.addEventListener("DOMContentLoaded", () => {
   $("trackSel").onchange = (e) => loadTrack(e.target.value);
   $("btnTrain").onclick = () => {
     S.training = !S.training;
+    // Hand the worker the trained weights to start from, not random ones.
+    if (S.training && S.pretrained && !S.workerSeeded) {
+      S.worker.postMessage({ cmd: "init", seed: Float32Array.from(S.pretrained) });
+      S.workerSeeded = true;
+    }
     S.worker.postMessage({ cmd: S.training ? "start" : "pause" });
     if (S.training) {
       S.policySource = "live"; S.lapBest = null;
@@ -632,6 +638,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("btnUseBest").onclick = usePretrained;
   $("btnReset").onclick = () => {
     S.worker.postMessage({ cmd: "reset" });
+    S.workerSeeded = false;
     S.training = false;
     $("btnTrain").textContent = "Start training";
     $("btnTrain").classList.remove("active");

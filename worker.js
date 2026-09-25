@@ -9,6 +9,7 @@ importScripts("tracks.js", "physics.js", "lapsim.js", "driver.js");
 
 let trainer = null;
 let running = false;
+let seed = null;   // shipped weights, used to warm start
 
 function boot() {
   const keys = Object.keys(TRACKS).filter((k) => !F1.TRACK_META[k].heldOut);
@@ -17,7 +18,13 @@ function boot() {
     return { track: t, ref: LapSim.reference(t, F1.RB21) };
   });
   trainer = new Jev.Trainer(circuits, F1.RB21, {});
-  postMessage({ type: "ready", tracks: keys });
+  // Warm start from the shipped weights. Training several circuits at once
+  // from random weights stalls -- early gains are circuit-specific and
+  // averaging cancels them, so every probe scores alike and rank-shaped ES has
+  // no gradient. Starting from a policy that can already drive turns this into
+  // refinement rather than a run that goes nowhere.
+  if (seed && seed.length === Jev.N_PARAMS) trainer.theta.set(seed);
+  postMessage({ type: "ready", tracks: keys, warmStarted: !!seed });
 }
 
 function loop() {
@@ -32,7 +39,7 @@ function loop() {
 
 onmessage = (e) => {
   const m = e.data;
-  if (m.cmd === "init") boot();
+  if (m.cmd === "init") { seed = m.seed ? new Float32Array(m.seed) : null; boot(); }
   else if (m.cmd === "start") { if (!running) { running = true; loop(); } }
   else if (m.cmd === "pause") running = false;
   else if (m.cmd === "reset") { running = false; boot(); }
