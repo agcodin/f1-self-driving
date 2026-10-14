@@ -3,3 +3,5 @@ node_modules/
 # Mid-training checkpoints, rewritten every couple of generations.
 weights/*.live.json
 weights/unified.live.json
+# Generated Endor datasets; regenerate with tools/export_endor.js
+data/endor/

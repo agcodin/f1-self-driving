@@ -282,6 +282,56 @@ Trained weights ship in `weights/`, so the car drives properly on load. Pressing
 live car to the policy being trained, so you watch it improve generation by
 generation.
 
+## Endor integration
+
+[Endor](https://endor.thetokencompany.com) fine-tunes decision models, and its
+primitives line up with this driver almost exactly:
+
+| Here | Endor |
+| --- | --- |
+| Typed pedal decision, 7 options | `Choice` with 7 option ids |
+| Confidence head | `Noul`, the probability of yes |
+| The policy's softmax | soft labels (`probs` per option) |
+| RLCD outcome grading | the label itself, from what actually happened |
+| Suzuka and Shanghai held out | `heldout` dataset for `project.evaluate` |
+
+So the simulator works as a decision-data generator. Every control step has a
+state, the decision taken, and -- unusually -- a *known outcome*, because the
+sim can be run forward to see whether the decision worked.
+
+```bash
+node tools/export_endor.js        # -> data/endor/endor_{train,heldout}.jsonl
+pip install endor
+export ENDOR_API_KEY=edk_...
+python3 tools/endor_train.py --dry-run     # validates locally, costs nothing
+python3 tools/endor_train.py --limit 2000  # smoke test, then drop --limit
+```
+
+The action label is **distilled** from the policy's softmax, so a fine-tune's
+ceiling is this policy. Confidence is not distilled: it is labelled with what
+actually happened over the next 0.75 s.
+
+Two things the export has to do deliberately:
+
+- **State carries no circuit name or lap position.** The policy has no track
+  identifier either, and leaving one in would let a fine-tune memorise layouts
+  and make the held-out circuits meaningless.
+- **Clean laps alone make the confidence question untrainable.** The shipped
+  policy almost never fails, so every row came back labelled `true` and a model
+  that always answers yes would score perfectly. Each circuit therefore also
+  contributes perturbed runs -- spawned off the racing line, up to 40 % over
+  the limit lap's speed, with 2-12 % of inputs randomised -- which genuinely go
+  wrong. That moves failures from 0 % to ~2 % of rows, and rare classes carry
+  inverse-frequency `weight`.
+
+Because the held-out set is two circuits the policy has never driven, rather
+than a random split of the same laps, this measures transfer to unseen layouts.
+
+**It cannot be the live driver.** The controller runs at 60 Hz and decisions
+are billed per call, so a remote API cannot sit in that loop. Endor's role here
+is offline: distil the policy, evaluate transfer, and compare a fine-tuned
+`decider-2b` against the 2,649-parameter evolved network.
+
 ## Layout
 
 ```
