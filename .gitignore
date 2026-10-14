@@ -5,3 +5,7 @@ weights/*.live.json
 weights/unified.live.json
 # Generated Endor datasets; regenerate with tools/export_endor.js
 data/endor/
+
+# Endor API key, never committed
+.env
+.venv/

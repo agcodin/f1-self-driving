@@ -49,6 +49,24 @@ def parse_args():
     return p.parse_args()
 
 
+def load_env():
+    """Read KEY=value lines from a gitignored .env beside the project.
+
+    Keeps the API key out of the shell history and out of chat. An existing
+    environment variable always wins.
+    """
+    path = os.path.join(HERE, "..", ".env")
+    if not os.path.exists(path):
+        return
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
 def read_jsonl(path):
     """Stdlib reader, so --dry-run validates the export without the SDK."""
     import json
@@ -77,9 +95,8 @@ def summarise(name, rows):
     counts, negatives = {}, 0
     for r in rows:
         labels = r.get("labels") if isinstance(r, dict) else (getattr(r, "labels", None) or {})
-        pedal = (labels or {}).get("pedal") or {}
-        probs = pedal.get("probs") if isinstance(pedal, dict) else None
-        if probs:
+        probs = (labels or {}).get("pedal") or None
+        if isinstance(probs, dict) and probs:
             counts[max(probs, key=probs.get)] = counts.get(max(probs, key=probs.get), 0) + 1
         if (labels or {}).get("confident") is False:
             negatives += 1
@@ -90,6 +107,7 @@ def summarise(name, rows):
 
 def main():
     args = parse_args()
+    load_env()
     if not args.dry_run:
         try:
             import endor
@@ -119,7 +137,10 @@ def main():
         return
 
     if not os.environ.get("ENDOR_API_KEY"):
-        sys.exit("set ENDOR_API_KEY (from the Endor dashboard). Do not paste it into chat.")
+        sys.exit("No ENDOR_API_KEY.\n"
+                 "Put it in a gitignored .env beside this repo:\n"
+                 "  printf 'ENDOR_API_KEY=edk_your_key\\n' >> ~/f1-self-driving/.env\n"
+                 "or export it in your shell profile. Do not paste it into chat.")
 
     client = endor.EndorClient()
     print("signed in as", client.whoami())

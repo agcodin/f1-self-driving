@@ -161,17 +161,29 @@ function lapRows(key, theta, opts = {}) {
 
       if (step % STRIDE === 0) {
         const probs = {};
-        for (let i = 0; i < J.N_DEC; i++) probs[J.DECISIONS[i].name] = round(p.probs[i], 4);
-        // Soft labels must sum to 1 within tolerance; fix up rounding drift.
+        let top = 0;
+        for (let i = 0; i < J.N_DEC; i++) {
+          probs[J.DECISIONS[i].name] = round(p.probs[i], 4);
+          if (p.probs[i] > p.probs[top]) top = i;
+        }
+        // Soft labels must be non-negative and sum to 1 within tolerance, so
+        // absorb rounding drift into the largest entry. It has to be the true
+        // argmax of probs, not p.decision -- perturbed runs overwrite
+        // p.decision with a random one, and correcting a near-zero entry by a
+        // negative amount makes the label invalid.
         const sum = Object.values(probs).reduce((a, b) => a + b, 0);
-        probs[J.DECISIONS[p.decision].name] = round(probs[J.DECISIONS[p.decision].name] + (1 - sum), 4);
+        const topName = J.DECISIONS[top].name;
+        probs[topName] = Math.max(0, round(probs[topName] + (1 - sum), 4));
         pending.push({
           due: step + OUTCOME_STEPS,
           row: {
             id: `${key}-${opts.tag || "clean"}-${String(step).padStart(5, "0")}`,
             state: describeState(car, tr),
             questions: QUESTIONS,
-            labels: { pedal: { probs } },
+            // A choice soft label is the option->probability map itself.
+            // {"probs": ...} is the datum *target* shape, not the label shape,
+            // and rows_to_datums rejects it.
+            labels: { pedal: probs },
           },
         });
       }
@@ -241,7 +253,7 @@ function main() {
     // row by the inverse frequency of its own majority class, capped so a rare
     // class cannot dominate.
     const counts = {};
-    const major = (r) => Object.entries(r.labels.pedal.probs).sort((a, b) => b[1] - a[1])[0][0];
+    const major = (r) => Object.entries(r.labels.pedal).sort((a, b) => b[1] - a[1])[0][0];
     for (const r of rows) counts[major(r)] = (counts[major(r)] || 0) + 1;
     const mean = rows.length / Object.keys(counts).length;
     // The confidence question is rarer still -- most of a lap genuinely is
