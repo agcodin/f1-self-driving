@@ -332,6 +332,43 @@ are billed per call, so a remote API cannot sit in that loop. Endor's role here
 is offline: distil the policy, evaluate transfer, and compare a fine-tuned
 `decider-2b` against the 2,649-parameter evolved network.
 
+### Endor results
+
+Both base models fine-tuned on the same 15,953 rows, evaluated on Suzuka and
+Shanghai -- circuits neither the policy nor the models have driven.
+
+| | trivial baseline | decider-2b `v1` | jev-9b `jev-v1` |
+| --- | --- | --- | --- |
+| parameters | | 1.9B | 9B |
+| GPU cost | | **$5.19** | $12.61 |
+| choice accuracy | 0.572 | **0.971** | 0.969 |
+| noul accuracy | 0.980 | 0.979 | **0.983** |
+| overall accuracy | | 0.975 | **0.976** |
+| overall ECE | | 0.027 | **0.019** |
+| accuracy at confidence >= 0.95 | | **0.999** on 72 % | 0.995 on 76 % |
+
+**4.7x the parameters bought nothing on accuracy.** Choice is marginally worse
+on the 9B and overall differs by 0.001, which is noise at 5,817 rows, for 2.4x
+the cost. That is not surprising on reflection: the target is a
+2,649-parameter network's softmax, and distilling something that small has
+little headroom for scale. The ceiling is the teacher, not the student.
+
+Where the 9B does win is calibration -- ECE 0.019 against 0.027 overall, 0.006
+against 0.009 on confidence. For a Jev-style architecture, where the point is
+knowing when to escalate, that is the more relevant axis. The trade shows up in
+selective coverage: the 2B is more accurate when confident, the 9B is confident
+more often.
+
+Two things these numbers do not say. The confidence question only **ties** its
+trivial baseline on accuracy (0.983 against always-true's 0.980), winning on
+calibration rather than on being right more often. And both models are
+*imitating* the evolved policy, never driving -- at 60 Hz with per-call
+billing, a remote decision model cannot sit in the control loop.
+
+Untrained, both base models are far worse than a constant predictor
+(`decider-2b` 0.100 and `jev-9b` 0.462 on choice, against 0.572 for always
+answering FULL_POWER), so the fine-tune is doing real work in both cases.
+
 ## Layout
 
 ```
