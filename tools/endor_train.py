@@ -26,7 +26,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "..", "data", "endor")
 
-PROJECT = "f1-driver"
+PROJECT = "f1training"   # the project created in the Endor dashboard
 BASE_MODEL = "decider-2b"
 
 
@@ -46,6 +46,8 @@ def parse_args():
                    help="skip evaluating the base model (saves decision spend)")
     p.add_argument("--dry-run", action="store_true",
                    help="validate the data and print the plan without calling Endor")
+    p.add_argument("--check", action="store_true",
+                   help="verify the key, org and balance. No training, no spend.")
     return p.parse_args()
 
 
@@ -143,7 +145,19 @@ def main():
                  "or export it in your shell profile. Do not paste it into chat.")
 
     client = endor.EndorClient()
-    print("signed in as", client.whoami())
+    who = client.whoami()
+    print("signed in as:", who)
+    if args.check:
+        try:
+            print("base models:", [b.id for b in client.base_models()])
+        except Exception as exc:                      # surfaced, not swallowed
+            print("could not list base models:", exc)
+        try:
+            print("projects:", [p_.name for p_ in client.projects.list()] or "(none yet)")
+        except Exception as exc:
+            print("could not list projects:", exc)
+        print("\nKey works. Nothing was created and nothing was billed.")
+        return
     project = client.projects.get_or_create(
         args.project, "F1 qualifying-lap pedal decisions from a physics simulator",
         kind="custom", base_models=[args.base_model])
