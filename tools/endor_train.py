@@ -172,12 +172,12 @@ def main():
             return base
         return base if base not in existing else f"{base}-{len(rows)}"
     train_ds, held_ds = pick("train", train), pick("heldout", held)
-    if train_ds not in names:
-        print("uploading", train_ds)
-        project.datasets.upload(train_ds, train)
-    if held_ds not in names:
-        print("uploading", held_ds)
-        project.datasets.upload(held_ds, held)
+    for name, rows in ((train_ds, train), (held_ds, held)):
+        if name in existing:
+            print(f"reusing dataset {name} ({len(rows)} rows)")
+        else:
+            print("uploading", name)
+            project.datasets.upload(name, rows)
 
     baseline = None
     if not args.skip_baseline:
@@ -188,6 +188,7 @@ def main():
     import time
     print(f"training {steps} steps...")
     t_start = time.time()
+    marks: list[tuple[int, float]] = []
     with project.runs.create(base_model=args.base_model, rank=args.rank,
                              total_steps=steps, name=f"f1-{args.checkpoint}") as run:
         step = 0
@@ -198,10 +199,18 @@ def main():
                 step += 1
                 if step % 25 == 0 or step == steps:
                     el = time.time() - t_start
-                    rate = el / step
-                    print(f"  step {step}/{steps}  {rate:.2f}s/step  "
-                          f"elapsed {el/60:.1f}m  eta {(steps-step)*rate/60:.1f}m  "
-                          f"spend ~${el/3600*7:.2f}", flush=True)
+                    # ETA off the MARGINAL rate, not the cumulative average.
+                    # Run startup is a fixed few minutes; averaged over the
+                    # first 25 steps it reads as 12 s/step on a 9B model and
+                    # projects a 7-hour run that actually takes under two.
+                    marginal = ((el - marks[-1][1]) / (step - marks[-1][0])) if marks else el / step
+                    marks.append((step, el))
+                    if len(marks) > 4:
+                        marks.pop(0)
+                    left = (steps - step) * marginal
+                    print(f"  step {step}/{steps}  {marginal:.2f}s/step (avg {el/step:.2f})  "
+                          f"elapsed {el/60:.1f}m  eta {left/60:.1f}m  "
+                          f"spend ~${el/3600*7:.2f} of ~${(el+left)/3600*7:.2f}", flush=True)
         # save_checkpoint returns an APIFuture; without .result() the script
         # races ahead and evaluation 404s on a model that does not exist yet.
         model = run.save_checkpoint(args.checkpoint).result()
