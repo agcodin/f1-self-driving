@@ -35,23 +35,29 @@ const F1 = require("../physics.js"), LS = require("../lapsim.js"), J = require("
 const outDir = process.argv[2] && !process.argv[2].startsWith("--")
   ? process.argv[2] : path.join(__dirname, "..", "data", "endor");
 const strideArg = process.argv.indexOf("--stride");
-const STRIDE = strideArg > -1 ? +process.argv[strideArg + 1] : 3;
+const STRIDE = strideArg > -1 ? +process.argv[strideArg + 1] : 5;
 
 // Endor caps a dataset at 50,000 rows.
 const MAX_ROWS = 50000;
+// Endor rejects a request body over 32 MB; leave headroom.
+const UPLOAD_LIMIT_MB = 30;
 // Match the confidence horizon the trainer grades against.
 const OUTCOME_STEPS = 45;
 // Perturbed runs per circuit, the source of the confidence question's negatives.
-const PERTURBED_RUNS = 26;
+const PERTURBED_RUNS = 18;
 
+// Terse on purpose. The questions block repeats in every row, and at the
+// original wording it was 62 % of a 59 MB file -- over Endor's 32 MB upload
+// limit on its own. Shorter criteria also means fewer tokens per decision,
+// which is what decisions are billed on.
 const DECISION_CRITERIA = {
-  HARD_BRAKE:  "Maximum braking. The corner ahead needs every bit of retardation available.",
+  HARD_BRAKE:  "Maximum braking.",
   BRAKE:       "Heavy braking, short of the limit.",
-  TRAIL_BRAKE: "Light braking carried into the corner while steering is applied.",
-  COAST:       "Neither throttle nor brake. Slowing on drag and engine braking alone.",
-  FEATHER:     "A small amount of throttle, trimming speed without accelerating hard.",
-  MODULATE:    "Partial throttle. Accelerating, but holding some in reserve for grip.",
-  FULL_POWER:  "Full throttle. The road ahead can take everything the car has.",
+  TRAIL_BRAKE: "Light braking carried into the corner.",
+  COAST:       "No throttle, no brake.",
+  FEATHER:     "A trickle of throttle.",
+  MODULATE:    "Partial throttle, some grip held in reserve.",
+  FULL_POWER:  "Full throttle.",
 };
 
 const round = (x, n = 3) => +x.toFixed(n);
@@ -101,20 +107,14 @@ const QUESTIONS = {
   pedal: {
     type: "choice",
     instructions:
-      "An F1 car is on a qualifying lap. Given the car's state and the road ahead, " +
-      "which longitudinal input gets round the lap fastest without leaving the track " +
-      "or exceeding the tyres' grip?",
+      "F1 qualifying lap. Which pedal input is fastest here without leaving the " +
+      "track or exceeding grip?",
     criteria: DECISION_CRITERIA,
   },
   confident: {
     type: "noul",
     instructions:
-      "Will this input turn out well? That is, will the car still be on track and " +
-      "inside the limit of its tyres three quarters of a second from now?",
-    criteria: {
-      true: "The car stays on track and within the grip limit.",
-      false: "The car leaves the track, spins, or exceeds the grip limit.",
-    },
+      "Will the car still be on track and within grip 0.75 s from now?",
   },
 };
 
@@ -271,9 +271,15 @@ function main() {
       rows.length = MAX_ROWS;
     }
     const file = path.join(outDir, `endor_${name}.jsonl`);
-    fs.writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const body = rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
+    fs.writeFileSync(file, body);
+    const mb = Buffer.byteLength(body) / 1e6;
+    if (mb > UPLOAD_LIMIT_MB) {
+      console.log(`  WARNING: ${mb.toFixed(1)} MB exceeds Endor's ${UPLOAD_LIMIT_MB} MB upload limit. ` +
+        `Raise --stride or lower PERTURBED_RUNS.`);
+    }
     const neg = rows.filter((r) => r.labels.confident === false).length;
-    console.log(`wrote ${file}  ${rows.length} rows, ` +
+    console.log(`wrote ${file}  ${rows.length} rows, ${mb.toFixed(1)} MB, ` +
       `confident=false on ${(100 * neg / rows.length).toFixed(1)}%`);
     console.log("  class balance: " + Object.entries(counts)
       .sort((a, b) => b[1] - a[1])

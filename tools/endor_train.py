@@ -162,11 +162,16 @@ def main():
         args.project, "F1 qualifying-lap pedal decisions from a physics simulator",
         kind="custom", base_models=[args.base_model])
 
-    # Datasets are immutable, so the name carries the row count to avoid a
-    # ConflictError when re-uploading a regenerated export.
-    names = {d.name for d in project.datasets.list()}
-    train_ds = f"train-{len(train)}"
-    held_ds = f"heldout-{len(held)}"
+    # Datasets are immutable, so a regenerated export needs a new name. Reuse
+    # the plain name when its row count already matches, rather than minting a
+    # duplicate copy of identical data on every run.
+    existing = {d.name: d for d in project.datasets.list()}
+    def pick(base, rows):
+        d = existing.get(base)
+        if d is not None and getattr(d, "n_rows", None) == len(rows):
+            return base
+        return base if base not in existing else f"{base}-{len(rows)}"
+    train_ds, held_ds = pick("train", train), pick("heldout", held)
     if train_ds not in names:
         print("uploading", train_ds)
         project.datasets.upload(train_ds, train)
@@ -180,7 +185,9 @@ def main():
         baseline = project.evaluate(f"{args.project}/{args.base_model}", held_ds).result()
         print("  baseline:", baseline.results["overall"])
 
+    import time
     print(f"training {steps} steps...")
+    t_start = time.time()
     with project.runs.create(base_model=args.base_model, rank=args.rank,
                              total_steps=steps, name=f"f1-{args.checkpoint}") as run:
         step = 0
@@ -189,10 +196,17 @@ def main():
                 run.forward_backward(batch)
                 run.optim_step(learning_rate=args.lr).result()
                 step += 1
-                if step % 50 == 0:
-                    print(f"  step {step}/{steps}")
-        model = run.save_checkpoint(args.checkpoint)
-        print("saved", model)
+                if step % 25 == 0 or step == steps:
+                    el = time.time() - t_start
+                    rate = el / step
+                    print(f"  step {step}/{steps}  {rate:.2f}s/step  "
+                          f"elapsed {el/60:.1f}m  eta {(steps-step)*rate/60:.1f}m  "
+                          f"spend ~${el/3600*7:.2f}", flush=True)
+        # save_checkpoint returns an APIFuture; without .result() the script
+        # races ahead and evaluation 404s on a model that does not exist yet.
+        model = run.save_checkpoint(args.checkpoint).result()
+        el = time.time() - t_start
+        print(f"saved {model}  ({el/60:.1f} min of GPU, about ${el/3600*7:.2f})")
 
     print("evaluating the fine-tune on held-out circuits...")
     tuned = project.evaluate(f"{args.project}/{args.checkpoint}", held_ds).result()
