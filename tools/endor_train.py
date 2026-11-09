@@ -36,12 +36,18 @@ def parse_args():
     p.add_argument("--project", default=PROJECT)
     p.add_argument("--base-model", default=BASE_MODEL)
     p.add_argument("--checkpoint", default="v1", help="saved as <project>/<name>")
+    p.add_argument("--heldout-dataset", default="heldout",
+                   help="evaluate on this existing dataset, so every model is "
+                        "scored on identical rows")
     p.add_argument("--epochs", type=int, default=2)
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--rank", type=int, default=16, help="LoRA rank")
     p.add_argument("--limit", type=int, default=0,
                    help="use only the first N training rows (cheap smoke test)")
+    p.add_argument("--max-steps", type=int, default=0,
+                   help="stop after N optimiser steps, to hold compute constant "
+                        "while varying the data")
     p.add_argument("--skip-baseline", action="store_true",
                    help="skip evaluating the base model (saves decision spend)")
     p.add_argument("--dry-run", action="store_true",
@@ -125,6 +131,8 @@ def main():
     datums = (train if args.dry_run else __import__("endor").data.rows_to_datums(train))
     n_datums = sum(len(r.get("labels", {})) for r in train) if args.dry_run else len(datums)
     steps = args.epochs * ((n_datums + args.batch_size - 1) // args.batch_size)
+    if args.max_steps:
+        steps = min(steps, args.max_steps)
     print(f"  {n_datums} datums -> {steps} optimiser steps "
           f"({args.epochs} epochs x batch {args.batch_size}, lr {args.lr})")
     # Billed per GPU-second, so the bill scales with steps. Step latency is not
@@ -171,13 +179,16 @@ def main():
         if d is not None and getattr(d, "n_rows", None) == len(rows):
             return base
         return base if base not in existing else f"{base}-{len(rows)}"
-    train_ds, held_ds = pick("train", train), pick("heldout", held)
-    for name, rows in ((train_ds, train), (held_ds, held)):
-        if name in existing:
-            print(f"reusing dataset {name} ({len(rows)} rows)")
-        else:
-            print("uploading", name)
-            project.datasets.upload(name, rows)
+    train_ds = pick("train", train)
+    held_ds = args.heldout_dataset
+    # Only the held-out set is uploaded. Training feeds datums built locally
+    # through forward_backward, so the 32 MB upload limit never applies to it
+    # -- which means the training set can be far larger than a dataset.
+    if held_ds in existing:
+        print(f"reusing held-out dataset {held_ds} ({len(held)} rows)")
+    else:
+        print("uploading", held_ds)
+        project.datasets.upload(held_ds, held)
 
     baseline = None
     if not args.skip_baseline:
@@ -193,10 +204,15 @@ def main():
                              total_steps=steps, name=f"f1-{args.checkpoint}") as run:
         step = 0
         for epoch in range(args.epochs):
+            if args.max_steps and step >= args.max_steps:
+                break
             for batch in endor.data.batches(datums, args.batch_size, seed=epoch):
                 run.forward_backward(batch)
                 run.optim_step(learning_rate=args.lr).result()
                 step += 1
+                if args.max_steps and step >= args.max_steps:
+                    print(f"  reached --max-steps {args.max_steps}", flush=True)
+                    break
                 if step % 25 == 0 or step == steps:
                     el = time.time() - t_start
                     # ETA off the MARGINAL rate, not the cumulative average.

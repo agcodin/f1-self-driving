@@ -36,6 +36,11 @@ const outDir = process.argv[2] && !process.argv[2].startsWith("--")
   ? process.argv[2] : path.join(__dirname, "..", "data", "endor");
 const strideArg = process.argv.indexOf("--stride");
 const STRIDE = strideArg > -1 ? +process.argv[strideArg + 1] : 5;
+// The held-out set stays at its original density on purpose. Comparing models
+// only means something if every one of them was scored on identical rows, and
+// an Endor dataset is immutable once uploaded.
+const heldArg = process.argv.indexOf("--held-stride");
+const HELD_STRIDE = heldArg > -1 ? +process.argv[heldArg + 1] : 5;
 
 // Endor caps a dataset at 50,000 rows.
 const MAX_ROWS = 50000;
@@ -119,7 +124,8 @@ const QUESTIONS = {
 };
 
 function lapRows(key, theta, opts = {}) {
-  const { seed = null, s0 = 0, speedScale = 0.98, offset = 0, noise = 0, maxTime = null } = opts;
+  const { seed = null, s0 = 0, speedScale = 0.98, offset = 0, noise = 0, maxTime = null,
+          stride = STRIDE } = opts;
   const tr = new F1.Track(key, globalThis.TRACKS[key]);
   const ref = LS.reference(tr, F1.RB21);
   const car = new F1.Car(tr, F1.RB21);
@@ -159,7 +165,7 @@ function lapRows(key, theta, opts = {}) {
       }
       car.setControls(steer, pedal);
 
-      if (step % STRIDE === 0) {
+      if (step % stride === 0) {
         const probs = {};
         let top = 0;
         for (let i = 0; i < J.N_DEC; i++) {
@@ -218,7 +224,8 @@ function main() {
     const tr = new F1.Track(key, globalThis.TRACKS[key]);
     const bucket = split[held ? "heldout" : "train"];
 
-    const clean = lapRows(key, theta, { tag: "clean" });
+    const stride = held ? HELD_STRIDE : STRIDE;
+    const clean = lapRows(key, theta, { tag: "clean", stride });
     bucket.push(...clean.rows);
 
     // Perturbed runs: off the line, over the reference speed, with occasional
@@ -228,7 +235,7 @@ function main() {
       const seed = 9001 + k * 977 + key.length * 13;
       const rng = J.makeRng(seed);
       const r = lapRows(key, theta, {
-        tag: `p${k}`, seed,
+        tag: `p${k}`, seed, stride,
         s0: rng() * tr.length,
         // Deliberately hard: a failure only labels the ~0.75 s before it, so
         // many short bad runs produce far more negatives than a few long ones.
